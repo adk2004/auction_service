@@ -1,0 +1,22 @@
+services:
+
+  db:
+    image: postgres:16
+    restart: always
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_PASSWORD: aksh
+      POSTGRES_USER: aksh
+      POSTGRES_DB: auction_db
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
+  
+volumes:
+  pgdata:
