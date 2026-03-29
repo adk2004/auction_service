@@ -10,9 +10,12 @@ RETURNING
 UPDATE auctions
 SET
     winnerId = $1,
-    highestBid = $2
+    highestBid = $2,
+    last_updated = NOW()
 WHERE
-    id = $3 AND highestBid < $1;
+    id = $3
+    AND highestBid < $2
+    AND state = 'ongoing';
 
 -- name: PlaceBid :exec
 INSERT INTO
@@ -22,14 +25,33 @@ VALUES
 
 -- name: GetAuctionByID :one
 SELECT
-    id,
-    title,
-    ownerId,
-    winnerId,
-    basePrice,
-    highestBid,
-    state
+    *
 FROM
     auctions
 WHERE
     id = $1;
+
+-- name: GetOngoingAuctions :many
+SELECT
+    id
+FROM
+    auctions
+WHERE
+    state = 'ongoing';
+
+-- name: EndAuction :exec
+UPDATE auctions
+SET
+    state = 'ended'
+WHERE
+    id = $1
+    AND state = 'ongoing';
+
+-- name: GetCompletedAuctions :many
+SELECT
+    *
+FROM
+    auctions
+WHERE
+    state = 'ongoing'
+    AND last_updated < NOW() - INTERVAL '5 minutes';

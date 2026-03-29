@@ -41,15 +41,23 @@ func (q *Queries) CreateAuction(ctx context.Context, arg CreateAuctionParams) (i
 	return id, err
 }
 
+const endAuction = `-- name: EndAuction :exec
+UPDATE auctions
+SET
+    state = 'ended'
+WHERE
+    id = $1
+    AND state = 'ongoing'
+`
+
+func (q *Queries) EndAuction(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, endAuction, id)
+	return err
+}
+
 const getAuctionByID = `-- name: GetAuctionByID :one
 SELECT
-    id,
-    title,
-    ownerId,
-    winnerId,
-    basePrice,
-    highestBid,
-    state
+    id, title, ownerid, winnerid, baseprice, highestbid, state, last_updated
 FROM
     auctions
 WHERE
@@ -67,8 +75,77 @@ func (q *Queries) GetAuctionByID(ctx context.Context, id int64) (Auction, error)
 		&i.Baseprice,
 		&i.Highestbid,
 		&i.State,
+		&i.LastUpdated,
 	)
 	return i, err
+}
+
+const getCompletedAuctions = `-- name: GetCompletedAuctions :many
+SELECT
+    id, title, ownerid, winnerid, baseprice, highestbid, state, last_updated
+FROM
+    auctions
+WHERE
+    state = 'ongoing'
+    AND last_updated < NOW() - INTERVAL '5 minutes'
+`
+
+func (q *Queries) GetCompletedAuctions(ctx context.Context) ([]Auction, error) {
+	rows, err := q.db.Query(ctx, getCompletedAuctions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Auction
+	for rows.Next() {
+		var i Auction
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Ownerid,
+			&i.Winnerid,
+			&i.Baseprice,
+			&i.Highestbid,
+			&i.State,
+			&i.LastUpdated,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getOngoingAuctions = `-- name: GetOngoingAuctions :many
+SELECT
+    id
+FROM
+    auctions
+WHERE
+    state = 'ongoing'
+`
+
+func (q *Queries) GetOngoingAuctions(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.Query(ctx, getOngoingAuctions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const placeBid = `-- name: PlaceBid :exec
@@ -93,9 +170,12 @@ const updateAuctionWinner = `-- name: UpdateAuctionWinner :exec
 UPDATE auctions
 SET
     winnerId = $1,
-    highestBid = $2
+    highestBid = $2,
+    last_updated = NOW()
 WHERE
     id = $3
+    AND highestBid < $2
+    AND state = 'ongoing'
 `
 
 type UpdateAuctionWinnerParams struct {

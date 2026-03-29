@@ -54,13 +54,14 @@ func (ns NullAuctionStatus) Value() (driver.Value, error) {
 }
 
 type Auction struct {
-	ID         int64         `json:"id"`
-	Title      string        `json:"title"`
-	Ownerid    int64         `json:"ownerid"`
-	Winnerid   pgtype.Int8   `json:"winnerid"`
-	Baseprice  int64         `json:"baseprice"`
-	Highestbid int64         `json:"highestbid"`
-	State      AuctionStatus `json:"state"`
+	ID          int64              `json:"id"`
+	Title       string             `json:"title"`
+	Ownerid     int64              `json:"ownerid"`
+	Winnerid    pgtype.Int8        `json:"winnerid"`
+	Baseprice   int64              `json:"baseprice"`
+	Highestbid  int64              `json:"highestbid"`
+	State       AuctionStatus      `json:"state"`
+	LastUpdated pgtype.Timestamptz `json:"last_updated"`
 }
 
 type Bid struct {

@@ -8,15 +8,9 @@ import (
 )
 
 type PostAuctionRequest struct {
-	ownerId int64
-	basePrice int64
-	title string
-}
-
-type PostBidRequest struct {
-	userId int64
-	auctionId int64
-	amount int64
+	OwnerId int64 `json:"ownerId"`
+	BasePrice int64 `json:"basePrice"`
+	Title string `json:"title"`
 }
 
 type AuctionHandler struct {
@@ -31,17 +25,36 @@ func NewAuctionHandler(aucSvc services.AuctionService) *AuctionHandler{
 
 func (h *AuctionHandler) PostAuction(w http.ResponseWriter, r *http.Request) {
 	var aucRq PostAuctionRequest
-	if err:= json.Read(r, aucRq); err!= nil {
+	if err:= json.Read(r, &aucRq); err!= nil {
 		json.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if aucRq.basePrice <= 0 || len(aucRq.title) == 0 {
+	if aucRq.BasePrice <= 0 || len(aucRq.Title) == 0 {
 		json.WriteError(w, http.StatusBadRequest, "Invalid json payload")
 		return
 	}
-	h.aucSvc.CreateAuction(r.Context(), aucRq.title, aucRq.basePrice, aucRq.ownerId)
+	auctionId, err := h.aucSvc.CreateAuction(r.Context(), aucRq.Title, aucRq.BasePrice, aucRq.OwnerId)
+	if err != nil {
+		json.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	json.WriteJSON(w, http.StatusOK, map[string]int64{"auctionId": auctionId})
 }
 
 func (h *AuctionHandler) PostBid(w http.ResponseWriter, r *http.Request) {
-
+	var bid services.Bid
+	if err:= json.Read(r, &bid); err!= nil {
+		json.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if bid.Amount <= 0 {
+		json.WriteError(w, http.StatusBadRequest, "Invalid bid amount")
+		return
+	}
+	err := h.aucSvc.CreateBid(r.Context(), bid)
+	if err != nil {
+		json.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	json.WriteJSON(w, http.StatusOK, map[string]string{"message": "Bid placed successfully"})
 }

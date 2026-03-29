@@ -10,7 +10,10 @@ import (
 
 type Querier interface {
 	CreateAuction(ctx context.Context, arg CreateAuctionParams) (int64, error)
+	EndAuction(ctx context.Context, id int64) error
 	GetAuctionByID(ctx context.Context, id int64) (Auction, error)
+	GetCompletedAuctions(ctx context.Context) ([]Auction, error)
+	GetOngoingAuctions(ctx context.Context) ([]int64, error)
 	PlaceBid(ctx context.Context, arg PlaceBidParams) error
 	UpdateAuctionWinner(ctx context.Context, arg UpdateAuctionWinnerParams) error
 }
