@@ -187,7 +187,7 @@ func (s *aucService) processBid(ctx context.Context, bid bid) error {
 		Winnerid:   pgtype.Int8{Int64: bid.UserId, Valid: true},
 	})
 	if err != nil {
-		resultCh <- "falied"
+		resultCh <- "failed"
 		return fmt.Errorf("error updating auction winner: %w", err)
 	}
 
