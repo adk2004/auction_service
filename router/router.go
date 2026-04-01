@@ -28,7 +28,7 @@ func SetupRouter(aucHandler *handlers.AuctionHandler) http.Handler {
 	//  auction routes
 	r.Post("/auction", aucHandler.PostAuction)
 	r.Post("/auction/bid", aucHandler.PostBid)
-	// r.Get("/auction/{id}", )
+	r.Get("/auction/{id}", aucHandler.GetAuction)
 
 	// test route
 	r.Get("/test", func(w http.ResponseWriter, _ *http.Request) {

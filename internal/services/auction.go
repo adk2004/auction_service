@@ -10,6 +10,7 @@ import (
 
 	repo "github.com/adk2004/auction_service/internal/adapters/postgresql/sqlc"
 	"github.com/adk2004/auction_service/internal/types"
+	"github.com/adk2004/auction_service/pkg/pubsub"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -28,14 +29,16 @@ type bid struct {
 // stores auctionId to mutex mapping for synchronizing bid placements on the same auction
 // also maps bid_ids to bid streams
 type bidManager struct {
-	chans map[int64]chan bid
+	chans      map[int64]chan bid
 	bidUpdates map[string]chan string
-	mu    sync.RWMutex
+	mu         sync.RWMutex
 }
 
 type AuctionService interface {
 	CreateAuction(ctx context.Context, title string, basePrice int64, ownerId int64) (int64, error)
 	CreateBid(ctx context.Context, bid types.PostBidRequest) (chan string, error)
+	SubAuction(ctx context.Context, auctionId int64) (chan pubsub.Event)
+	UnsubAuction(auctionId int64, ch chan pubsub.Event)
 	Cancel()
 }
 
@@ -46,6 +49,8 @@ type aucService struct {
 	ctx      context.Context
 	cancelFn context.CancelFunc
 	wg       sync.WaitGroup
+	subscriber *pubsub.Subscriber
+	publisher *pubsub.Publisher
 }
 
 func NewAuctionService(repo *repo.Queries, db *pgx.Conn) (AuctionService, error) {
@@ -53,18 +58,20 @@ func NewAuctionService(repo *repo.Queries, db *pgx.Conn) (AuctionService, error)
 	aucService := &aucService{
 		repo: repo,
 		bm: &bidManager{
-			chans: make(map[int64]chan bid),
-			bidUpdates: make(map[string] chan string),
+			chans:      make(map[int64]chan bid),
+			bidUpdates: make(map[string]chan string),
 		},
 		db:       db,
 		ctx:      ctx,
 		cancelFn: cancel,
+		publisher: pubsub.NewPublisher(),
+		subscriber: pubsub.NewSubscriber(),
 	}
 
 	ids, err := aucService.repo.GetOngoingAuctions(aucService.ctx)
 	if err != nil {
 		log.Printf("Error fetching ongoing auctions: %v", err)
-		return aucService, err
+		return nil, err
 	}
 	for _, id := range ids {
 		aucService.bm.chans[id] = make(chan bid, 1000)
@@ -82,9 +89,24 @@ func (s *aucService) Cancel() {
 		close(bids)
 		delete(s.bm.chans, auctionId)
 	}
+	for bidId, resultCh := range s.bm.bidUpdates {
+		close(resultCh)
+		delete(s.bm.bidUpdates, bidId)
+	}
 	s.bm.mu.Unlock()
 	s.wg.Wait()
+	_ = s.publisher.Close()
+	_ = s.subscriber.Close()
 }
+
+func (s *aucService) SubAuction(ctx context.Context, auctionId int64) (chan pubsub.Event) {
+	return s.subscriber.Subscribe(fmt.Sprintf("topic:%d", auctionId))
+}
+
+func (s *aucService) UnsubAuction(auctionId int64, ch chan pubsub.Event) {
+	s.subscriber.Unsubscribe(fmt.Sprintf("topic:%d", auctionId),ch)
+}
+
 
 func (s *aucService) CreateAuction(ctx context.Context, title string, basePrice int64, ownerId int64) (int64, error) {
 	auctionId, err := s.repo.CreateAuction(ctx, repo.CreateAuctionParams{
@@ -113,6 +135,13 @@ func (s *aucService) CreateBid(ctx context.Context, bidReq types.PostBidRequest)
 		return nil, fmt.Errorf("request cancelled: %w", ctx.Err())
 	default:
 	}
+
+	s.bm.mu.RLock()
+	bids, ok := s.bm.chans[bidReq.AuctionId]
+	s.bm.mu.RUnlock()
+	if !ok {
+		return nil, errors.New("auction Id not found")
+	}
 	bid := bid{
 		uuid:      uuid.New().String(),
 		UserId:    bidReq.UserId,
@@ -122,16 +151,12 @@ func (s *aucService) CreateBid(ctx context.Context, bidReq types.PostBidRequest)
 	resultCh := make(chan string, 3)
 	s.bm.mu.Lock()
 	s.bm.bidUpdates[bid.uuid] = resultCh
-	bids, ok := s.bm.chans[bid.AuctionId]
 	s.bm.mu.Unlock()
-	if !ok {
-		return nil, errors.New("auction Id not found")
-	}
 	select {
 	case bids <- bid:
 		log.Printf("Bid placed: AuctionId=%d, UserId=%d, Amount=%d", bid.AuctionId, bid.UserId, bid.Amount)
 	default:
-		return nil,errors.New("bid channel is full, try again later")
+		return nil, errors.New("bid channel is full, try again later")
 	}
 	return resultCh, nil
 }
@@ -148,11 +173,11 @@ func (s *aucService) placeBids(bids chan bid) {
 
 func (s *aucService) processBid(ctx context.Context, bid bid) error {
 	s.bm.mu.RLock()
-    resultCh, ok := s.bm.bidUpdates[bid.uuid]
-    s.bm.mu.RUnlock()
+	resultCh, ok := s.bm.bidUpdates[bid.uuid]
+	s.bm.mu.RUnlock()
 	if !ok {
-        return fmt.Errorf("result channel not found for bid %s", bid.uuid)
-    }
+		return fmt.Errorf("result channel not found for bid %s", bid.uuid)
+	}
 	defer func() {
 		s.bm.mu.Lock()
 		close(s.bm.bidUpdates[bid.uuid])
@@ -208,6 +233,13 @@ func (s *aucService) processBid(ctx context.Context, bid bid) error {
 
 	log.Printf("Bid committed successfully: AuctionId=%d, UserId=%d, Amount=%d", bid.AuctionId, bid.UserId, bid.Amount)
 	resultCh <- "accepted"
+	s.publisher.Publish(s.ctx, fmt.Sprintf("topic:%d", bid.AuctionId), pubsub.Event{
+		AuctionID: bid.AuctionId,
+		BidderID:  bid.UserId,
+		BidAmount: float64(bid.Amount),
+		Completed: false,
+		Time:   time.Now(),
+	})
 	return nil
 }
 
@@ -244,6 +276,15 @@ func (s *aucService) processExpiredAuctions(ctx context.Context) {
 		// close bid channel and delete from map
 		s.closeBidChannel(auc.ID)
 		log.Printf("Auction closed: AuctionId=%d", auc.ID)
+
+		// publish auction closed event
+		s.publisher.Publish(s.ctx, fmt.Sprintf("topic:%d", auc.ID), pubsub.Event{
+			AuctionID: auc.ID,
+			BidderID:  auc.Winnerid.Int64,
+			BidAmount: float64(auc.Highestbid),
+			Completed: true,
+			Time:   time.Now(),
+		})
 	}
 }
 
