@@ -233,13 +233,16 @@ func (s *aucService) processBid(ctx context.Context, bid bid) error {
 
 	log.Printf("Bid committed successfully: AuctionId=%d, UserId=%d, Amount=%d", bid.AuctionId, bid.UserId, bid.Amount)
 	resultCh <- "accepted"
-	s.publisher.Publish(s.ctx, fmt.Sprintf("topic:%d", bid.AuctionId), pubsub.Event{
+	err = s.publisher.Publish(context.Background(), fmt.Sprintf("topic:%d", bid.AuctionId), pubsub.Event{
 		AuctionID: bid.AuctionId,
 		BidderID:  bid.UserId,
 		BidAmount: float64(bid.Amount),
 		Completed: false,
 		Time:   time.Now(),
 	})
+	if err != nil {
+		log.Printf("Error publishing bid event: %v", err)
+	}
 	return nil
 }
 

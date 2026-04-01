@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -109,21 +110,21 @@ func (h *AuctionHandler) GetAuction(w http.ResponseWriter, r *http.Request) {
 			}
 			jsonEvent, err := json.Marshal(event)
 			if err != nil {
-				js.WriteError(w, http.StatusInternalServerError, "Failed to marshal event")
-				return
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", "marshal failed")
+				flusher.Flush()
+				continue
 			}
 			if event.Completed {
 				fmt.Fprintf(w, "data: %s\n\n", "auction closed")
 				flusher.Flush()
-				h.aucSvc.UnsubAuction(int64(aucId), ch)
+				h.aucSvc.UnsubAuction(aucId, ch)
 				return
 			}
 			fmt.Fprintf(w, "data: %s\n\n", string(jsonEvent))
 			flusher.Flush()
 		case <-r.Context().Done():
-			h.aucSvc.UnsubAuction(int64(aucId), ch)
-			fmt.Fprintf(w, "data: %s\n\n", "unsubscribed")
-			flusher.Flush()
+			h.aucSvc.UnsubAuction(aucId, ch)
+			log.Printf("Client disconnected from auction %d updates\n", aucId)
 			return
 		}
 	}

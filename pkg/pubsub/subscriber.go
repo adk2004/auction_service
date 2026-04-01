@@ -131,6 +131,8 @@ func (c *Subscriber) Unsubscribe(topic string, cl chan Event) {
 
 
 func (c *Subscriber) unsubscribeTopic(topic string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	state, ok := c.topics[topic]
 	if !ok {
 		return
